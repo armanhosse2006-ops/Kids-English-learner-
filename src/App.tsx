@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User as FirebaseUser } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, updateDoc, serverTimestamp, getDocFromServer } from 'firebase/firestore';
+import { GoogleGenAI } from "@google/genai";
 import firebaseConfig from '../firebase-applet-config.json';
 import { 
   Star, 
@@ -29,10 +30,21 @@ import {
 } from 'lucide-react';
 
 // --- Firebase Initialization ---
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth();
+const firebaseConfigObj = (firebaseConfig && typeof firebaseConfig === 'object') ? firebaseConfig : {};
+const app = initializeApp(firebaseConfigObj);
+export const db = getFirestore(app, (firebaseConfigObj as any).firestoreDatabaseId);
+export const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
+
+// --- Gemini Initialization ---
+const getApiKey = () => {
+  try {
+    return (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+const ai = new GoogleGenAI({ apiKey: getApiKey() });
 
 // --- Firestore Error Handling ---
 enum OperationType {
@@ -104,13 +116,14 @@ const SONGS: Song[] = [
 
 interface Task {
   id: string;
-  type: 'LEARNING' | 'QUIZ' | 'TRACING' | 'CAMERA' | 'MIC';
+  type: 'LEARNING' | 'QUIZ' | 'TRACING' | 'CAMERA' | 'MIC' | 'AI_CHALLENGE';
   title: string;
   bnTitle: string;
   emoji?: string;
   options?: { emoji: string; label: string; correct: boolean }[];
   targetLetter?: string;
   targetColor?: string;
+  aiPrompt?: string;
 }
 
 interface Lesson {
@@ -129,6 +142,7 @@ interface GameState {
   currentTaskIndex: number;
   lang: Language;
   isPremium: boolean;
+  customLessons: Lesson[];
 }
 
 // --- Lessons Data ---
@@ -148,6 +162,7 @@ const LESSONS: Lesson[] = [
         { emoji: '🍉', label: 'Watermelon', correct: false },
         { emoji: '🍍', label: 'Pineapple', correct: false },
       ]},
+      { id: 't-ai-1', type: 'AI_CHALLENGE', title: "Can you name something else starting with 'A'?", bnTitle: "'A' দিয়ে শুরু হয় এমন আর কী কী জানো?", aiPrompt: "The kid is learning the letter A. They just learned A is for Apple. Ask them to name something else starting with A. If they answer correctly, congratulate them. If not, give a hint. Keep it short for a kid." },
     ]
   },
   {
@@ -164,6 +179,7 @@ const LESSONS: Lesson[] = [
         { emoji: '🟢', label: 'Green', correct: false },
         { emoji: '🟡', label: 'Yellow', correct: false },
       ]},
+      { id: 't-ai-2', type: 'AI_CHALLENGE', title: "Tell Tuni about other red things!", bnTitle: "টুনিকে আরও কিছু লাল জিনিসের কথা বলো!", aiPrompt: "The kid is learning the color RED. Ask them to name something else that is usually red. Encourage them if they get it right." },
     ]
   },
   {
@@ -179,6 +195,148 @@ const LESSONS: Lesson[] = [
         { emoji: '🅰️', label: 'A', correct: false },
         { emoji: '🌀', label: 'C', correct: false },
         { emoji: '💠', label: 'D', correct: false },
+      ]},
+    ]
+  },
+  {
+    id: 'l4',
+    title: 'Numbers',
+    bnTitle: 'সংখ্যা গণনা',
+    icon: '🔢',
+    color: 'from-orange-500 to-amber-600',
+    tasks: [
+      { id: 't8', type: 'LEARNING', title: "This is number '1'", bnTitle: "এটি হলো সংখ্যা '১'" },
+      { id: 't9', type: 'TRACING', title: "Trace the number '1'", bnTitle: "তোমার আঙুল দিয়ে '১' লিখে দেখাও!", targetLetter: '1' },
+      { id: 't10', type: 'QUIZ', title: "How many stars are there? ⭐", bnTitle: "এখানে কয়টি তারা আছে? ⭐", options: [
+        { emoji: '1️⃣', label: 'One', correct: true },
+        { emoji: '2️⃣', label: 'Two', correct: false },
+        { emoji: '3️⃣', label: 'Three', correct: false },
+        { emoji: '4️⃣', label: 'Four', correct: false },
+      ]},
+    ]
+  },
+  {
+    id: 'l5',
+    title: 'Animals',
+    bnTitle: 'পশুপাখি',
+    icon: '🦁',
+    color: 'from-green-500 to-lime-600',
+    tasks: [
+      { id: 't11', type: 'LEARNING', title: "The Lion says ROAR!", bnTitle: "সিংহ গর্জন করে— হুঙ্কার!" },
+      { id: 't12', type: 'MIC', title: "Roar like a Lion!", bnTitle: "সিংহের মতো গর্জন করো!" },
+      { id: 't13', type: 'QUIZ', title: "Which one is the King of Jungle?", bnTitle: "বনের রাজা কোনটি?", options: [
+        { emoji: '🦁', label: 'Lion', correct: true },
+        { emoji: '🐘', label: 'Elephant', correct: false },
+        { emoji: '🦒', label: 'Giraffe', correct: false },
+        { emoji: '🦓', label: 'Zebra', correct: false },
+      ]},
+      { id: 't14', type: 'CAMERA', title: "Find a PET or a TOY animal!", bnTitle: "একটি পোষা প্রাণী বা খেলনা পশু দেখাও!" },
+      { id: 't-ai-3', type: 'AI_CHALLENGE', title: "Why is the Lion the King?", bnTitle: "সিংহ কেন বনের রাজা?", aiPrompt: "The kid is learning about animals. Ask them why they think the lion is called the king of the jungle. Encourage their creativity." },
+    ]
+  },
+  {
+    id: 'l6',
+    title: 'Shapes',
+    bnTitle: 'আকার',
+    icon: '🔺',
+    color: 'from-pink-500 to-rose-600',
+    tasks: [
+      { id: 't15', type: 'LEARNING', title: "This is a Triangle!", bnTitle: "এটি হলো ত্রিভুজ!" },
+      { id: 't16', type: 'TRACING', title: "Trace the triangle shape!", bnTitle: "ত্রিভুজ আকারটি আঁকো!", targetLetter: '△' },
+      { id: 't17', type: 'CAMERA', title: "Find something round like a circle!", bnTitle: "বৃত্তের মতো গোল কিছু দেখাও!" },
+      { id: 't18', type: 'QUIZ', title: "Which one has 3 sides?", bnTitle: "কোনটির ৩টি দিক আছে?", options: [
+        { emoji: '🔺', label: 'Triangle', correct: true },
+        { emoji: '🟩', label: 'Square', correct: false },
+        { emoji: '🔵', label: 'Circle', correct: false },
+        { emoji: '⭐', label: 'Star', correct: false },
+      ]},
+    ]
+  },
+  {
+    id: 'l7',
+    title: 'Vehicles',
+    bnTitle: 'যানবাহন',
+    icon: '🚗',
+    color: 'from-cyan-500 to-blue-600',
+    tasks: [
+      { id: 't19', type: 'LEARNING', title: "The car goes Vroom!", bnTitle: "গাড়ি চলে ভট ভট ভট ভুম!" },
+      { id: 't20', type: 'MIC', title: "Say Vroom!", bnTitle: "বলো ভুম ভুম!" },
+      { id: 't-ai-4', type: 'AI_CHALLENGE', title: "Name a vehicle that flies.", bnTitle: "আকাশে ওড়ে এমন একটি গাড়ির নাম বলো।", aiPrompt: "The kid is learning about vehicles. Ask them to name a vehicle that flies in the sky. If they say airplane or helicopter, congratulate them!" },
+      { id: 't21', type: 'QUIZ', title: "Which one runs on water?", bnTitle: "কোনটি পানিতে চলে?", options: [
+        { emoji: '⛵', label: 'Boat', correct: true },
+        { emoji: '🚗', label: 'Car', correct: false },
+        { emoji: '✈️', label: 'Airplane', correct: false },
+        { emoji: '🚲', label: 'Bicycle', correct: false },
+      ]},
+    ]
+  },
+  {
+    id: 'l8',
+    title: 'Body Parts',
+    bnTitle: 'শরীরের অঙ্গ',
+    icon: '👀',
+    color: 'from-fuchsia-500 to-purple-600',
+    tasks: [
+      { id: 't22', type: 'LEARNING', title: "We see with our Eyes", bnTitle: "আমরা চোখ দিয়ে দেখি" },
+      { id: 't23', type: 'CAMERA', title: "Point to your nose!", bnTitle: "তোমার নাক দেখাও!" },
+      { id: 't24', type: 'QUIZ', title: "What do we use to hear?", bnTitle: "আমরা কী দিয়ে শুনি?", options: [
+        { emoji: '👂', label: 'Ear', correct: true },
+        { emoji: '👁️', label: 'Eye', correct: false },
+        { emoji: '👃', label: 'Nose', correct: false },
+        { emoji: '👅', label: 'Tongue', correct: false },
+      ]},
+    ]
+  },
+  {
+    id: 'l9',
+    title: 'Vegetables',
+    bnTitle: 'শাকসবজি',
+    icon: '🥕',
+    color: 'from-emerald-500 to-green-600',
+    tasks: [
+      { id: 't25', type: 'LEARNING', title: "Carrots are healthy!", bnTitle: "গাজর স্বাস্থ্যের জন্য ভালো!" },
+      { id: 't26', type: 'TRACING', title: "Trace the letter 'C' for Carrot!", bnTitle: "'C' অক্ষরটি লিখে দেখাও!", targetLetter: 'C' },
+      { id: 't-ai-5', type: 'AI_CHALLENGE', title: "Tell Tuni about a green vegetable.", bnTitle: "টুনিকে একটি সবুজ সবজির নাম বলো।", aiPrompt: "The kid is learning about vegetables. Ask them to name a vegetable that is green in color. Be incredibly encouraging." },
+      { id: 't27', type: 'QUIZ', title: "Which one is a vegetable?", bnTitle: "কোনটি সবজি?", options: [
+        { emoji: '🥦', label: 'Broccoli', correct: true },
+        { emoji: '🍎', label: 'Apple', correct: false },
+        { emoji: '🍌', label: 'Banana', correct: false },
+        { emoji: '🍉', label: 'Watermelon', correct: false },
+      ]},
+    ]
+  },
+  {
+    id: 'l10',
+    title: 'Space',
+    bnTitle: 'মহাকাশ',
+    icon: '🚀',
+    color: 'from-indigo-500 to-violet-600',
+    tasks: [
+      { id: 't28', type: 'LEARNING', title: "The Moon shines at night!", bnTitle: "চাঁদ রাতে আলো দেয়!" },
+      { id: 't29', type: 'MIC', title: "Say MOON!", bnTitle: "বলো চাঁদ!" },
+      { id: 't-ai-6', type: 'AI_CHALLENGE', title: "What else is in the night sky?", bnTitle: "রাতের আকাশে আর কী কী দেখা যায়?", aiPrompt: "The kid is learning about space. Ask them what else they can see in the night sky besides the moon (looking for stars, planets, etc.)." },
+      { id: 't30', type: 'QUIZ', title: "Which planet do we live on?", bnTitle: "আমরা কোন গ্রহে বাস করি?", options: [
+        { emoji: '🌍', label: 'Earth', correct: true },
+        { emoji: '☀️', label: 'Sun', correct: false },
+        { emoji: '🌕', label: 'Moon', correct: false },
+        { emoji: '⭐', label: 'Star', correct: false },
+      ]},
+    ]
+  },
+  {
+    id: 'l11',
+    title: 'Feelings',
+    bnTitle: 'অনুভূতি',
+    icon: '😊',
+    color: 'from-teal-500 to-cyan-600',
+    tasks: [
+      { id: 't31', type: 'LEARNING', title: "When we are glad, we Smile!", bnTitle: "আমরা খুশি হলে হাসি!" },
+      { id: 't32', type: 'MIC', title: "Laugh out loud: HA HA HA!", bnTitle: "জোরে হাসো: হা হা হা!" },
+      { id: 't33', type: 'QUIZ', title: "Which face is sad?", bnTitle: "কোন মুখটি দুঃখের?", options: [
+        { emoji: '😢', label: 'Sad', correct: true },
+        { emoji: '😀', label: 'Happy', correct: false },
+        { emoji: '😂', label: 'Laughing', correct: false },
+        { emoji: '😎', label: 'Cool', correct: false },
       ]},
     ]
   }
@@ -388,6 +546,143 @@ const TracingCanvas = ({ targetLetter, onComplete, t }: { targetLetter: string, 
   );
 };
 
+const AIChallengeUI = ({ task, onComplete, t }: { task: Task, onComplete: () => void, t: any }) => {
+  const [input, setInput] = useState('');
+  const [response, setResponse] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!input.trim()) return;
+    setLoading(true);
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: `${task.aiPrompt}\nUser answer: ${input}` }] }],
+        config: {
+          systemInstruction: "You are Tuni, a friendly space parrot teaching kids. Keep responses very short (max 2 sentences), encouraging, and suitable for a 5-year-old."
+        }
+      });
+      setResponse(response.text || 'Wow! Great job explorer!');
+    } catch (error) {
+      console.error("AI Challenge Error", error);
+      setResponse("That's interesting! Let's keep going!");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="w-full flex flex-col items-center gap-6"
+    >
+      <div className="w-full glass-card p-8 flex flex-col gap-6 neon-border bg-slate-900/40">
+        <div className="flex items-center gap-4 border-b border-white/10 pb-4">
+          <div className="w-12 h-12 bg-purple-500/20 rounded-full flex items-center justify-center">
+            <Zap className="w-6 h-6 text-purple-400" />
+          </div>
+          <h3 className="font-black text-purple-200 uppercase tracking-widest text-sm">Space Challenge</h3>
+        </div>
+        
+        {response ? (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-6">
+            <p className="text-xl font-bold text-white leading-relaxed">{response}</p>
+            <button 
+              onClick={onComplete}
+              className="btn-futuristic w-full bg-green-600/20 text-green-400 border-green-600/30"
+            >
+              {t.next} <ArrowRight className="inline ml-2" />
+            </button>
+          </motion.div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <input 
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your answer here..."
+              className="w-full bg-white/5 border border-white/10 rounded-2xl p-6 text-xl text-white placeholder:text-slate-600 focus:outline-none focus:border-purple-500 transition-all font-medium"
+              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+            />
+            <button 
+              onClick={handleSubmit}
+              disabled={loading || !input.trim()}
+              className={`btn-futuristic w-full flex items-center justify-center gap-3 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {loading ? (
+                <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Rocket className="w-6 h-6" />
+              )}
+              {loading ? 'Transmitting...' : t.check}
+            </button>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+};
+
+const GenerateLessonNode = ({ onGenerate, lessonIndex, previousLessons }: { onGenerate: (l: Lesson) => void, lessonIndex: number, previousLessons: string[] }) => {
+  const [loading, setLoading] = useState(false);
+  
+  const generate = async () => {
+    setLoading(true);
+    try {
+      const prompt = `Create a fun, educational lesson for a young child (around 5 years old). It is lesson number ${lessonIndex + 1}. Make the topic new and exciting. 
+We have already covered these topics: ${previousLessons.join(', ')}. Please choose a completely different topic. As they progress, introduce slightly more advanced vocabulary or new concepts while remaining suitable for a 5-year-old.
+JSON format only. Do NOT wrap in markdown.  
+The tasks array should contain exactly 4 tasks, using a mix of these shapes:
+- {"id":"t_custom_1","type":"LEARNING","title":"Eng...","bnTitle":"Ben..."}
+- {"id":"t_custom_2","type":"CAMERA","title":"Eng...","bnTitle":"Ben..."}
+- {"id":"t_custom_3","type":"MIC","title":"Eng...","bnTitle":"Ben..."}
+- {"id":"t_custom_4","type":"QUIZ","title":"Eng...","bnTitle":"Ben...","options":[{"emoji":"🍎","label":"Apple","correct":true}]}
+- {"id":"t_custom_5","type":"AI_CHALLENGE","title":"Eng...","bnTitle":"Ben...","aiPrompt":"Ask them... "}
+- {"id":"t_custom_6","type":"TRACING","title":"Eng...","bnTitle":"Ben...","targetLetter":"A"}
+
+Return a JSON object conforming to this structure:
+{"id": "l_custom_${Date.now()}", "title": "Topic Title in English", "bnTitle": "Topic Title in Bengali", "icon": "A single emoji", "color": "from-purple-500 to-indigo-600", "tasks": []}`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+           responseMimeType: "application/json"
+        }
+      });
+      
+      const text = response.text || "{}";
+      const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const newLesson = JSON.parse(cleanText);
+      // Give tasks unique random IDs
+      newLesson.tasks = newLesson.tasks.map((t: any) => ({ ...t, id: `t_custom_${Math.random()}` }));
+      onGenerate(newLesson);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to generate lesson, please try again!");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <motion.div className="relative flex flex-col items-center group">
+       <div 
+         className={`w-32 h-32 rounded-full flex flex-col items-center justify-center p-1 cursor-pointer transition-transform ${loading ? 'animate-pulse' : 'hover:scale-110'}`} 
+         onClick={!loading ? generate : undefined}
+       >
+          <div className="w-full h-full rounded-full border-4 border-dashed border-purple-400 flex items-center justify-center bg-purple-500/20 backdrop-blur-sm shadow-[0_0_40px_rgba(168,85,247,0.3)]">
+             {loading ? <div className="w-10 h-10 border-4 border-purple-300 border-t-transparent rounded-full animate-spin" /> : <Star className="w-12 h-12 text-yellow-300 animate-pulse" />}
+          </div>
+       </div>
+       <div className={`mt-4 font-black tracking-widest text-center uppercase text-xs px-4 py-1 rounded-full backdrop-blur-md bg-purple-500/20 text-white`}>
+          {loading ? 'Creating...' : 'Unlock via AI'}
+       </div>
+    </motion.div>
+  );
+};
+
 const Tuni = ({ message }: { message: string }) => (
   <motion.div 
     initial={{ y: 20, opacity: 0 }}
@@ -441,7 +736,8 @@ export default function App() {
     currentLesson: null,
     currentTaskIndex: 0,
     lang: 'BN',
-    isPremium: false
+    isPremium: false,
+    customLessons: []
   });
 
   const t = content[gameState.lang];
@@ -480,14 +776,19 @@ export default function App() {
       const snap = await getDoc(userRef);
       if (snap.exists()) {
         const data = snap.data();
-        setGameState(prev => ({
-          ...prev,
-          stars: data.stars,
-          unlockedLessonIndex: data.unlockedLessonIndex,
-          lang: data.lang,
-          isPremium: data.isPremium
-        }));
-        setAppState('HOME');
+        if (data) {
+          setGameState(prev => ({
+            ...prev,
+            stars: data.stars || 0,
+            unlockedLessonIndex: data.unlockedLessonIndex || 0,
+            lang: (data.lang as Language) || 'BN',
+            isPremium: !!data.isPremium,
+            customLessons: data.customLessons || []
+          }));
+          setAppState('HOME');
+        } else {
+          throw new Error("User data is null");
+        }
       } else {
         // Create new profile
         const newProfile = {
@@ -496,10 +797,11 @@ export default function App() {
           unlockedLessonIndex: 0,
           lang: 'BN',
           isPremium: false,
+          customLessons: [],
           updatedAt: serverTimestamp()
         };
         await setDoc(userRef, newProfile);
-        setGameState(prev => ({ ...prev, stars: 0, unlockedLessonIndex: 0, lang: 'BN', isPremium: false }));
+        setGameState(prev => ({ ...prev, stars: 0, unlockedLessonIndex: 0, lang: 'BN', isPremium: false, customLessons: [] }));
         setAppState('HOME');
       }
     } catch (error) {
@@ -576,7 +878,8 @@ export default function App() {
     if (gameState.currentTaskIndex < gameState.currentLesson.tasks.length - 1) {
       setGameState(prev => ({ ...prev, currentTaskIndex: prev.currentTaskIndex + 1 }));
     } else {
-      const isNewLesson = LESSONS.indexOf(gameState.currentLesson) === gameState.unlockedLessonIndex;
+      const allLessons = [...LESSONS, ...(gameState.customLessons || [])];
+      const isNewLesson = allLessons.findIndex(l => l.id === gameState.currentLesson?.id) === gameState.unlockedLessonIndex;
       const newStars = gameState.stars + 20;
       const newIndex = isNewLesson ? gameState.unlockedLessonIndex + 1 : gameState.unlockedLessonIndex;
       
@@ -600,37 +903,37 @@ export default function App() {
   return (
     <div className="min-h-screen nebula-bg flex flex-col items-center p-6 font-sans overflow-x-hidden text-white selection:bg-purple-500">
       {/* Top Bar (HUD) */}
-      <div className="fixed top-0 left-0 right-0 h-24 flex items-center justify-between px-6 z-50 bg-slate-950/20 backdrop-blur-sm border-b border-white/5">
+      <div className="fixed top-0 left-0 right-0 h-20 md:h-24 flex items-center justify-between px-4 md:px-8 z-50 bg-slate-950/20 backdrop-blur-sm border-b border-white/5">
         <div className="flex items-center gap-2">
           <button 
             onClick={toggleLang}
-            className="bg-white/10 backdrop-blur-md px-4 py-2 rounded-xl border border-white/20 hover:bg-white/20 transition-all flex items-center gap-2"
+            className="bg-white/10 backdrop-blur-md px-3 md:px-4 py-1.5 md:py-2 rounded-xl border border-white/20 hover:bg-white/20 transition-all flex items-center gap-2"
           >
-            <Languages className="w-5 h-5 text-purple-400" />
-            <span className="font-bold text-sm tracking-tighter uppercase">{gameState.lang === 'EN' ? 'BN' : 'EN'}</span>
+            <Languages className="w-4 h-4 md:w-5 md:h-5 text-purple-400" />
+            <span className="font-bold text-xs md:text-sm tracking-tighter uppercase">{gameState.lang === 'EN' ? 'BN' : 'EN'}</span>
           </button>
           
           {user && (
             <button 
               onClick={handleLogout}
-              className="bg-red-500/10 backdrop-blur-md p-2 rounded-xl border border-red-500/20 hover:bg-red-500/20 transition-all"
+              className="bg-red-500/10 backdrop-blur-md p-1.5 md:p-2 rounded-xl border border-red-500/20 hover:bg-red-500/20 transition-all"
               title={t.logout}
             >
-              <LogOut className="w-5 h-5 text-red-400" />
+              <LogOut className="w-4 md:w-5 h-4 md:h-5 text-red-400" />
             </button>
           )}
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 md:gap-3">
           <button 
             onClick={() => setAppState('SHOP')}
-            className="bg-yellow-500/20 text-yellow-400 p-2 rounded-xl border border-yellow-500/30 hover:bg-yellow-500/30 transition-all flex items-center justify-center"
+            className="bg-yellow-500/20 text-yellow-400 p-1.5 md:p-2 rounded-xl border border-yellow-500/30 hover:bg-yellow-500/30 transition-all flex items-center justify-center"
           >
-            <Zap className="w-5 h-5" />
+            <Zap className="w-4 h-4 md:w-5 md:h-5" />
           </button>
-          <div className="flex items-center gap-3 bg-gradient-to-r from-purple-600/50 to-blue-600/50 px-5 py-2 rounded-2xl shadow-xl border border-white/10">
-            <Star className="text-yellow-400 fill-current w-6 h-6 animate-pulse" />
-            <span className="text-xl font-black">{gameState.stars}</span>
+          <div className="flex items-center gap-2 md:gap-3 bg-gradient-to-r from-purple-600/50 to-blue-600/50 px-3 md:px-5 py-1.5 md:py-2 rounded-2xl shadow-xl border border-white/10">
+            <Star className="text-yellow-400 fill-current w-5 h-5 md:w-6 md:h-6 animate-pulse" />
+            <span className="text-lg md:text-xl font-black">{gameState.stars}</span>
           </div>
         </div>
       </div>
@@ -657,18 +960,18 @@ export default function App() {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 1.1 }}
-            className="mt-40 w-full max-w-md flex flex-col items-center glass-card p-10 text-center"
+            className="mt-32 md:mt-40 w-[90%] max-w-md flex flex-col items-center glass-card p-6 md:p-10 text-center"
           >
-            <div className="w-32 h-32 bg-gradient-to-br from-purple-500 to-blue-500 rounded-full flex items-center justify-center mb-8 shadow-2xl">
-              <UserIcon className="w-16 h-16 text-white" />
+            <div className="w-24 h-24 md:w-32 md:h-32 bg-gradient-to-br from-purple-500 to-blue-500 rounded-full flex items-center justify-center mb-6 md:mb-8 shadow-2xl">
+              <UserIcon className="w-12 h-12 md:w-16 md:h-16 text-white" />
             </div>
-            <h2 className="text-3xl font-black mb-4 uppercase tracking-tighter text-white">{t.login}</h2>
-            <p className="text-slate-400 mb-10 leading-relaxed font-medium">{t.loginDesc}</p>
+            <h2 className="text-2xl md:text-3xl font-black mb-4 uppercase tracking-tighter text-white">{t.login}</h2>
+            <p className="text-slate-400 mb-8 md:mb-10 text-sm md:text-base leading-relaxed font-medium">{t.loginDesc}</p>
             <button 
               onClick={handleGoogleLogin}
-              className="btn-futuristic w-full flex items-center justify-center gap-4 py-4"
+              className="btn-futuristic w-full flex items-center justify-center gap-4 py-3 md:py-4"
             >
-              <Globe className="w-6 h-6" />
+              <Globe className="w-5 h-5 md:w-6 md:h-6" />
               {t.login}
             </button>
           </motion.div>
@@ -681,43 +984,45 @@ export default function App() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="mt-28 w-full max-w-md flex flex-col items-center gap-10 pb-32"
+            className="mt-24 md:mt-32 w-full max-w-2xl px-4 flex flex-col items-center gap-8 md:gap-10 pb-32"
           >
             <Tuni message={t.welcome} />
             
-            {/* Free Stars Ad Button */}
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={showRewardedAd}
-              className="w-full flex items-center gap-4 p-4 glass-card border-green-500/30 bg-green-500/5 mb-2 overflow-hidden"
-            >
-              <div className="bg-green-500 p-2 rounded-xl shadow-lg">
-                <Star className="w-6 h-6 text-white" />
-              </div>
-              <div className="text-left">
-                <p className="font-black text-sm text-green-400 uppercase tracking-widest">{t.getStars}</p>
-                <p className="text-slate-400 text-xs">+20 Galactic Stars</p>
-              </div>
-              <div className="ml-auto bg-green-500/20 px-3 py-1 rounded-full text-[10px] font-bold">ADS</div>
-            </motion.button>
-            
-            {/* Music Shortcut */}
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => setAppState('MUSIC')}
-              className="w-full flex items-center gap-6 p-6 glass-card border-purple-500/30 bg-gradient-to-r from-purple-900/20 to-blue-900/20 mb-8 overflow-hidden group"
-            >
-              <div className="bg-gradient-to-br from-yellow-400 to-orange-500 p-4 rounded-2xl shadow-lg group-hover:rotate-12 transition-transform">
-                <Music className="w-8 h-8 text-white" />
-              </div>
-              <div className="text-left">
-                <p className="font-black text-xl text-yellow-300 uppercase tracking-tighter">{t.musicWorld}</p>
-                <p className="text-slate-400 text-sm">{t.musicDesc}</p>
-              </div>
-              <ArrowRight className="ml-auto w-6 h-6 text-slate-500 group-hover:translate-x-2 transition-transform" />
-            </motion.button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+              {/* Free Stars Ad Button */}
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={showRewardedAd}
+                className="flex items-center gap-4 p-4 glass-card border-green-500/30 bg-green-500/5 overflow-hidden"
+              >
+                <div className="bg-green-500 p-2 rounded-xl shadow-lg">
+                  <Star className="w-6 h-6 text-white" />
+                </div>
+                <div className="text-left">
+                  <p className="font-black text-xs md:text-sm text-green-400 uppercase tracking-widest leading-none">{t.getStars}</p>
+                  <p className="text-slate-400 text-[10px] md:text-xs">+20 Galactic Stars</p>
+                </div>
+                <div className="ml-auto bg-green-500/20 px-3 py-1 rounded-full text-[10px] font-bold">ADS</div>
+              </motion.button>
+              
+              {/* Music Shortcut */}
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale:0.98 }}
+                onClick={() => setAppState('MUSIC')}
+                className="flex items-center gap-4 p-4 glass-card border-purple-500/30 bg-gradient-to-r from-purple-900/20 to-blue-900/20 overflow-hidden group"
+              >
+                <div className="bg-gradient-to-br from-yellow-400 to-orange-500 p-2 rounded-xl shadow-lg group-hover:rotate-12 transition-transform">
+                  <Music className="w-6 h-6 text-white" />
+                </div>
+                <div className="text-left">
+                  <p className="font-black text-sm md:text-base text-yellow-300 uppercase tracking-tighter leading-none">{t.musicWorld}</p>
+                  <p className="text-slate-400 text-[10px] md:text-xs">Songs & Rhymes</p>
+                </div>
+                <ArrowRight className="ml-auto w-5 h-5 text-slate-500 group-hover:translate-x-1 transition-transform" />
+              </motion.button>
+            </div>
 
             <motion.div 
               variants={{
@@ -725,7 +1030,7 @@ export default function App() {
                 show: {
                   opacity: 1,
                   transition: {
-                    staggerChildren: 0.2
+                    staggerChildren: 0.05
                   }
                 }
               }}
@@ -733,21 +1038,20 @@ export default function App() {
               animate="show"
               className="flex flex-col items-center gap-6 w-full relative"
             >
-              {LESSONS.map((lesson, idx) => {
+              {(() => { const allLessons = [...LESSONS, ...(gameState.customLessons || [])]; return allLessons.map((lesson, idx) => {
                 const isLocked = idx > gameState.unlockedLessonIndex;
                 const isCurrent = idx === gameState.unlockedLessonIndex;
                 const isCompleted = idx < gameState.unlockedLessonIndex;
-                const shift = idx % 2 === 0 ? '-30px' : '30px';
+                const shift = idx % 2 === 0 ? -30 : 30;
 
                 return (
                   <motion.div 
                     key={lesson.id}
                     variants={{
-                      hidden: { x: idx % 2 === 0 ? -50 : 50, opacity: 0 },
-                      show: { x: 0, opacity: 1 }
+                      hidden: { x: idx % 2 === 0 ? -100 : 100, opacity: 0 },
+                      show: { x: shift, opacity: 1 }
                     }}
                     className="relative flex flex-col items-center group"
-                    style={{ transform: `translateX(${shift})` }}
                   >
                     <motion.button
                       whileHover={!isLocked ? { scale: 1.15, rotate: 5 } : {}}
@@ -780,7 +1084,22 @@ export default function App() {
                     </div>
                   </motion.div>
                 );
-              })}
+              })})()}
+              
+              {(() => { 
+                 const allLessons = [...LESSONS, ...(gameState.customLessons || [])]; 
+                 return gameState.unlockedLessonIndex >= allLessons.length && (
+                   <GenerateLessonNode 
+                      onGenerate={(newLesson) => {
+                         const updated = [...(gameState.customLessons || []), newLesson];
+                         setGameState(p => ({ ...p, customLessons: updated }));
+                         syncToFirebase({ customLessons: updated });
+                      }} 
+                      lessonIndex={allLessons.length}
+                      previousLessons={allLessons.map(l => l.title)}
+                   />
+                 ); 
+              })()}
               <div className="absolute top-0 bottom-0 left-1/2 -ml-0.5 w-1 border-l-4 border-dashed border-white/5 -z-10 h-full" />
             </motion.div>
           </motion.div>
@@ -793,14 +1112,14 @@ export default function App() {
             initial={{ opacity: 0, x: 50 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -50 }}
-            className="mt-28 w-full max-w-lg flex flex-col items-center"
+            className="mt-24 md:mt-32 w-full max-w-2xl px-4 pb-12"
           >
-            <div className="w-full flex items-center gap-6 mb-10">
+            <div className="w-full flex items-center gap-4 md:gap-6 mb-8 md:mb-10">
               <button 
                 onClick={() => setAppState('HOME')} 
-                className="p-3 bg-white/10 rounded-2xl border border-white/10 hover:bg-white/20 transition-all"
+                className="p-2 md:p-3 bg-white/10 rounded-2xl border border-white/10 hover:bg-white/20 transition-all"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5 md:w-6 md:h-6" />
               </button>
               <ProgressBar 
                 current={gameState.currentTaskIndex + 1} 
@@ -812,7 +1131,7 @@ export default function App() {
               return (
                 <div className="w-full flex flex-col items-center min-h-[60vh]">
                   <Tuni message={gameState.lang === 'EN' ? task.title : task.bnTitle} />
-                  <div className="w-full flex-1 flex flex-col items-center justify-center gap-8 px-4">
+                  <div className="w-full flex-1 flex flex-col items-center justify-center gap-6 md:gap-10 px-2 md:px-4">
                     {task.type === 'LEARNING' && (
                       <motion.div 
                         initial={{ scale: 0.8, opacity: 0 }} 
@@ -822,46 +1141,46 @@ export default function App() {
                         <motion.div 
                           animate={{ scale: [1, 1.02, 1] }}
                           transition={{ repeat: Infinity, duration: 3 }}
-                          className="w-72 h-72 glass-card flex items-center justify-center mb-10 neon-border scale-110"
+                          className="w-56 h-56 md:w-72 md:h-72 glass-card flex items-center justify-center mb-8 md:mb-10 neon-border scale-100 md:scale-110"
                         >
-                          <div className="text-[14rem] font-black bg-clip-text text-transparent bg-gradient-to-b from-white to-purple-400 drop-shadow-[0_0_30px_rgba(168,85,247,0.5)]">A</div>
+                          <div className="text-8xl md:text-[14rem] font-black bg-clip-text text-transparent bg-gradient-to-b from-white to-purple-400 drop-shadow-[0_0_30px_rgba(168,85,247,0.5)]">A</div>
                         </motion.div>
                         <motion.button 
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
                           onClick={nextTask} 
-                          className="btn-futuristic w-full group"
+                          className="btn-futuristic w-full group py-4"
                         >
                           {t.next} <ArrowRight className="inline ml-2 group-hover:translate-x-2 transition-transform" />
                         </motion.button>
                       </motion.div>
                     )}
                     {task.type === 'MIC' && (
-                      <motion.div className="flex flex-col items-center gap-12">
-                        <div className="text-9xl p-12 glass-card bg-purple-500/20 shadow-[0_0_50px_rgba(239,68,68,0.2)]">🍎</div>
+                      <motion.div className="flex flex-col items-center gap-10 md:gap-12">
+                        <div className="text-8xl md:text-9xl p-8 md:p-12 glass-card bg-purple-500/20 shadow-[0_0_50px_rgba(239,68,68,0.2)]">🍎</div>
                         <motion.button 
                           whileHover={{ scale: 1.1 }}
                           whileTap={{ scale: 0.9 }}
                           onClick={nextTask} 
-                          className="w-24 h-24 bg-gradient-to-tr from-blue-500 to-indigo-600 rounded-full shadow-[0_0_40px_rgba(59,130,246,0.6)] flex items-center justify-center animate-pulse"
+                          className="w-20 h-20 md:w-24 md:h-24 bg-gradient-to-tr from-blue-500 to-indigo-600 rounded-full shadow-[0_0_40px_rgba(59,130,246,0.6)] flex items-center justify-center animate-pulse"
                         >
-                          <Mic className="w-10 h-10 text-white" />
+                          <Mic className="w-8 h-8 md:w-10 md:h-10 text-white" />
                         </motion.button>
                         <p className="font-black text-blue-400 tracking-widest animate-bounce">APPLE!</p>
                       </motion.div>
                     )}
                     {task.type === 'QUIZ' && (
-                      <div className="grid grid-cols-2 gap-6 w-full">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6 w-full">
                         {task.options?.map((opt, i) => (
                           <motion.button 
                             key={i}
                             whileHover={{ scale: 1.05, y: -5 }}
                             whileTap={{ scale: 0.95 }}
                             onClick={() => opt.correct ? nextTask() : alert(t.tryAgain)}
-                            className="glass-card p-10 flex flex-col items-center gap-4 hover:bg-white/20 hover:border-purple-500 transition-all border border-white/5 group"
+                            className="glass-card p-6 md:p-10 flex flex-col items-center gap-3 md:gap-4 hover:bg-white/20 hover:border-purple-500 transition-all border border-white/5 group"
                           >
-                            <span className="text-7xl group-hover:scale-110 transition-transform">{opt.emoji}</span>
-                            <span className="font-black text-purple-200 tracking-wide">{opt.label}</span>
+                            <span className="text-6xl md:text-7xl group-hover:scale-110 transition-transform">{opt.emoji}</span>
+                            <span className="font-black text-purple-200 tracking-wide text-sm md:text-base">{opt.label}</span>
                           </motion.button>
                         ))}
                       </div>
@@ -874,16 +1193,23 @@ export default function App() {
                       />
                     )}
                     {task.type === 'CAMERA' && (
-                      <div className="flex flex-col items-center gap-10 text-center w-full">
-                        <div className="w-full aspect-video glass-card flex items-center justify-center border-dashed border-white/20 neon-border">
-                          <div className="bg-white/5 p-12 rounded-full">
-                            <Camera className="w-24 h-24 text-white/20 animate-pulse" />
+                      <div className="flex flex-col items-center gap-8 md:gap-10 text-center w-full px-2 md:px-4">
+                        <div className="w-full aspect-video glass-card flex items-center justify-center border-dashed border-white/20 neon-border bg-black/20">
+                          <div className="bg-white/5 p-8 md:p-12 rounded-full">
+                            <Camera className="w-16 h-16 md:w-24 md:h-24 text-white/20 animate-pulse" />
                           </div>
                         </div>
-                        <button onClick={nextTask} className="btn-futuristic w-full bg-gradient-to-r from-red-500/20 to-red-600/20 border-red-500/30">
+                        <button onClick={nextTask} className="btn-futuristic w-full bg-gradient-to-r from-red-500/20 to-red-600/20 border-red-500/30 py-4">
                            {t.beautiful}
                         </button>
                       </div>
+                    )}
+                    {task.type === 'AI_CHALLENGE' && (
+                      <AIChallengeUI 
+                        task={task} 
+                        onComplete={nextTask} 
+                        t={t}
+                      />
                     )}
                   </div>
                 </div>
@@ -899,22 +1225,22 @@ export default function App() {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 1.1 }}
-            className="mt-28 w-full max-w-2xl flex flex-col items-center pb-20"
+            className="mt-24 md:mt-32 w-full max-w-4xl flex flex-col items-center px-4 pb-20"
           >
-            <div className="w-full flex items-center justify-between mb-8 px-4">
+            <div className="w-full flex items-center justify-between mb-8">
               <button 
                 onClick={() => setAppState('HOME')} 
-                className="p-4 bg-white/10 rounded-2xl border border-white/10 hover:bg-white/20 transition-all flex items-center gap-2 font-bold"
+                className="p-3 md:p-4 bg-white/10 rounded-2xl border border-white/10 hover:bg-white/20 transition-all flex items-center gap-2 font-bold"
               >
-                <ArrowRight className="w-6 h-6 rotate-180" />
-                {t.back}
+                <ArrowRight className="w-5 h-5 md:w-6 md:h-6 rotate-180" />
+                <span className="hidden sm:inline">{t.back}</span>
               </button>
-              <h2 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-orange-400 uppercase tracking-tighter">
+              <h2 className="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-orange-400 uppercase tracking-tighter">
                 {t.musicWorld}
               </h2>
             </div>
             <Tuni message={t.musicDesc} />
-            <div className="w-full flex flex-col gap-8 overflow-y-auto px-4 max-h-[70vh]">
+            <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8 overflow-y-auto max-h-[70vh] pr-2 custom-scrollbar">
               {SONGS.map((song, idx) => (
                 <motion.div
                   key={song.id}
@@ -935,14 +1261,14 @@ export default function App() {
                       className="rounded-t-3xl"
                     />
                   </div>
-                  <div className="p-6 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <span className="text-4xl">{song.emoji}</span>
+                  <div className="p-4 md:p-6 flex items-center justify-between">
+                    <div className="flex items-center gap-3 md:gap-4">
+                      <span className="text-3xl md:text-4xl">{song.emoji}</span>
                       <div>
-                        <h3 className="font-black text-xl text-white uppercase tracking-tight">
+                        <h3 className="font-black text-base md:text-xl text-white uppercase tracking-tight">
                           {gameState.lang === 'EN' ? song.title : song.bnTitle}
                         </h3>
-                        <p className="text-slate-400 text-sm">Official Rhymes</p>
+                        <p className="text-slate-400 text-[10px] md:text-sm">Official Rhymes</p>
                       </div>
                     </div>
                   </div>
@@ -959,28 +1285,28 @@ export default function App() {
             initial={{ opacity: 0, y: 50 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 50 }}
-            className="mt-28 w-full max-w-md flex flex-col items-center pb-20"
+            className="mt-24 md:mt-32 w-full max-w-lg flex flex-col items-center px-4 pb-20"
           >
-            <div className="w-full flex items-center justify-between mb-8 px-4">
+            <div className="w-full flex items-center justify-between mb-8">
               <button 
                 onClick={() => setAppState('HOME')} 
-                className="p-4 bg-white/10 rounded-2xl border border-white/10 hover:bg-white/20 transition-all flex items-center gap-2 font-bold"
+                className="p-3 md:p-4 bg-white/10 rounded-2xl border border-white/10 hover:bg-white/20 transition-all flex items-center gap-2 font-bold"
               >
-                <ArrowRight className="w-6 h-6 rotate-180" />
-                {t.back}
+                <ArrowRight className="w-5 h-5 md:w-6 md:h-6 rotate-180" />
+                <span className="hidden sm:inline">{t.back}</span>
               </button>
-              <h2 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-orange-400 uppercase tracking-tighter">
+              <h2 className="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-orange-400 uppercase tracking-tighter">
                 {t.shop}
               </h2>
             </div>
             <Tuni message="এখানে তুমি রকেট আর জাদুর পোশাক কিনতে পারো!" />
-            <div className="w-full flex flex-col gap-6 px-4">
-              <div className="glass-card p-6 border-purple-500/30 bg-purple-500/10 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="text-4xl">👑</div>
+            <div className="w-full flex flex-col gap-4 md:gap-6">
+              <div className="glass-card p-4 md:p-6 border-purple-500/30 bg-purple-500/10 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 md:gap-4">
+                  <div className="text-3xl md:text-4xl">👑</div>
                   <div>
-                    <h3 className="font-black text-white">{t.premium}</h3>
-                    <p className="text-slate-400 text-xs">{t.removeAds}</p>
+                    <h3 className="font-black text-sm md:text-base text-white">{t.premium}</h3>
+                    <p className="text-slate-400 text-[10px] md:text-xs">{t.removeAds}</p>
                   </div>
                 </div>
                 <button 
@@ -989,31 +1315,32 @@ export default function App() {
                     syncToFirebase({ isPremium: true });
                     alert("congratulations! You are now a Premium Explorer!");
                   }}
-                  className="bg-gradient-to-r from-yellow-400 to-orange-500 text-slate-950 px-6 py-2 rounded-xl font-bold shadow-lg"
+                  className="bg-gradient-to-r from-yellow-400 to-orange-500 text-slate-950 px-4 md:px-6 py-2 rounded-xl text-xs md:text-sm font-bold shadow-lg"
                 >
                   $4.99
                 </button>
               </div>
-              <div className="glass-card p-6 border-blue-500/30 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="text-4xl">🚀</div>
+              <div className="glass-card p-4 md:p-6 border-blue-500/30 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 md:gap-4">
+                  <div className="text-3xl md:text-4xl">🚀</div>
                   <div>
-                    <h3 className="font-black text-white">Super Rocket</h3>
-                    <p className="text-slate-400 text-xs">Unlock All Lessons Now</p>
+                    <h3 className="font-black text-sm md:text-base text-white">Super Rocket</h3>
+                    <p className="text-slate-400 text-[10px] md:text-xs">Unlock All Lessons</p>
                   </div>
                 </div>
                 <button 
                   onClick={() => {
+                    const allLessons = [...LESSONS, ...(gameState.customLessons || [])];
                     const newStars = gameState.stars - 100;
                     if(gameState.stars >= 100) {
-                      setGameState(prev => ({ ...prev, stars: newStars, unlockedLessonIndex: LESSONS.length }));
-                      syncToFirebase({ stars: newStars, unlockedLessonIndex: LESSONS.length });
+                      setGameState(prev => ({ ...prev, stars: newStars, unlockedLessonIndex: allLessons.length }));
+                      syncToFirebase({ stars: newStars, unlockedLessonIndex: allLessons.length });
                       alert("Super Rocket Activated!");
                     } else {
                       alert("Not enough stars! Watch ads to earn more.");
                     }
                   }}
-                  className="bg-blue-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg flex items-center gap-2"
+                  className="bg-blue-500 text-white px-4 md:px-6 py-2 rounded-xl text-xs md:text-sm font-bold shadow-lg flex items-center gap-2"
                 >
                   <Star className="w-4 h-4 fill-current" /> 100
                 </button>
