@@ -1,0 +1,13 @@
+{
+  "name": "Tuni Space Academy",
+  "description": "A Duolingo-style bilingual learning path for kids to learn English and Bengali through interactive space missions, tracing, and AI challenges.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "Bilingual Learning Path",
+    "Interactive Galaxy Missions",
+    "AI Voice & Vision Tasks"
+  ]
+}

@@ -1,0 +1,57 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             data.stars is number && data.stars >= 0 &&
+             data.unlockedLessonIndex is number && data.unlockedLessonIndex >= 0 &&
+             data.lang in ['EN', 'BN'] &&
+             data.isPremium is bool &&
+             data.updatedAt == request.time &&
+             data.keys().hasAll(['uid', 'stars', 'unlockedLessonIndex', 'lang', 'isPremium', 'updatedAt']) &&
+             data.keys().size() == 6;
+    }
+
+    // --- Collections ---
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming());
+      
+      allow update: if isOwner(userId) && isValidUser(incoming()) && (
+        // Action: Standard Progress
+        incoming().diff(existing()).affectedKeys().hasOnly(['stars', 'unlockedLessonIndex', 'lang', 'updatedAt']) ||
+        // Action: Purchase Premium
+        incoming().diff(existing()).affectedKeys().hasOnly(['isPremium', 'updatedAt'])
+      );
+      
+      allow delete: if false;
+    }
+  }
+}

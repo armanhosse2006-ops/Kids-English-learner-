@@ -1,0 +1,25 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Stores user progress, achievements, and settings.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique ID of the user." },
+        "displayName": { "type": "string", "description": "User's display name." },
+        "stars": { "type": "number", "description": "Total stars earned." },
+        "unlockedLessonIndex": { "type": "number", "description": "Current lesson progress." },
+        "lang": { "type": "string", "enum": ["EN", "BN"], "description": "Preferred language." },
+        "isPremium": { "type": "boolean", "description": "Whether the user has premium status." },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "stars", "unlockedLessonIndex", "lang", "isPremium", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "All individual user profile documents."
+    }
+  }
+}
